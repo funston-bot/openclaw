@@ -807,7 +807,9 @@ describe("renderModelSetup", () => {
     );
     const current = container.querySelector(".model-setup__current");
     expect(container.querySelector(".settings-section")).toBe(current);
-    expect(text(current!)).toContain("Current connection openai/gpt-5 Verify connection");
+    expect(text(current!)).toContain("Current connection openai/gpt-5 Configured");
+    expect(text(current!)).toContain("Signed in locally");
+    expect(text(current!)).toContain("Verify connection");
     expect(current?.querySelector('[data-provider-icon="codex"]')).not.toBeNull();
     current?.querySelector<HTMLButtonElement>("button")?.click();
     expect(onVerify).toHaveBeenCalledOnce();
@@ -887,7 +889,9 @@ describe("renderModelSetup", () => {
         verify: { phase: "failed", status: "billing", error: "No credits" },
       }),
     );
-    expect(text(container)).toContain("Billing problem No credits");
+    expect(text(container)).toContain(
+      "Billing problem No credits Restore provider billing or quota, then retry.",
+    );
   });
 
   it("hides the current connection without a configured model", () => {

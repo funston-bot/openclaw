@@ -1991,9 +1991,17 @@ export const en: TranslationMap = {
     verify: {
       title: "Current connection",
       button: "Verify connection",
+      retry: "Retry verification",
+      changeConnection: "Change connection",
       checking: "Checking — asking {modelRef} for a quick reply…",
       answered: "Answered",
       answeredIn: "Answered in {latencyMs} ms",
+      status: {
+        configured: "Configured",
+        checking: "Checking",
+        connected: "Connected",
+        needsAttention: "Needs attention",
+      },
     },
     access: {
       adminRequired: "Model setup requires operator.admin access.",
@@ -2006,6 +2014,7 @@ export const en: TranslationMap = {
       signInNeeded: "Sign-in needed",
       detected: "Detected",
       testAndUse: "Test & use",
+      retry: "Retry test",
       testingButton: "Testing…",
       testing: "Testing — asking {modelRef} for a quick reply…",
     },
@@ -2066,6 +2075,14 @@ export const en: TranslationMap = {
       format: "Invalid response",
       unavailable: "Unavailable",
       unknown: "Connection failed",
+    },
+    failureGuidance: {
+      auth: "Review the provider credential or sign-in, then retry.",
+      rateLimit: "Wait for the provider limit to reset, then retry.",
+      billing: "Restore provider billing or quota, then retry.",
+      unavailable: "Make sure the provider service is running and reachable, then retry.",
+      format: "Check that the endpoint exposes a compatible chat model, then retry.",
+      unknown: "Review the connection details, then retry.",
     },
     errors: {
       requestFailed: "Model setup request failed.",
