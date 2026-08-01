@@ -71,6 +71,7 @@ import { resolveAvailableAgentHarnessPolicy } from "../harness/selection.js";
 import { resolveCliRuntimeExecutionProvider } from "../model-runtime-aliases.js";
 import { isCliProvider } from "../model-selection.js";
 import { resolveOpenAIRuntimeProvider } from "../openai-routing.js";
+import { hasVerifiedRequesterCompletionHandoff } from "../requester-tool-policy.js";
 import { resolveAgentRunSessionTarget, type AgentRunSessionTarget } from "../run-session-target.js";
 import { resolveAgentRunAbortLifecycleFields } from "../run-termination.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
@@ -82,7 +83,10 @@ import {
   resolveSessionWriteLockTargetKey,
 } from "../session-write-lock.js";
 import { buildUsageWithNoCost } from "../stream-message-shared.js";
-import { isSubagentAnnounceCompletionHandoff } from "../subagent-announce-handoff.js";
+import {
+  isSubagentAnnounceCompletionHandoff,
+  isTrustedSubagentCompletionHandoffForRun,
+} from "../subagent-announce-handoff.js";
 import {
   buildClaudeCliFallbackContextPrelude,
   claudeCliSessionTranscriptHasContent,
@@ -549,13 +553,34 @@ export function runAgentAttempt(params: {
           ? { id: sessionAuthProfileId, source: sessionAuthProfileSource }
           : undefined;
   const isRawModelRun = params.opts.modelRun === true || params.opts.promptMode === "none";
-  // A completion handoff relays frozen child output; letting it act with the
-  // requester's tools would turn child text into a new privileged instruction.
+  // A completion handoff relays frozen child output, so only a verified private
+  // capability plus persisted requester lineage may restore its tool surface.
   const isSubagentAnnounceHandoff = isSubagentAnnounceCompletionHandoff({
     inputProvenance: params.opts.inputProvenance,
     internalEvents: params.opts.internalEvents,
   });
-  const disableTools = params.opts.modelRun === true || isSubagentAnnounceHandoff;
+  const exactSubagentAnnounceHandoff =
+    isSubagentAnnounceHandoff &&
+    isTrustedSubagentCompletionHandoffForRun({
+      handoff: params.opts.trustedInternalHandoff,
+      inputProvenance: params.opts.inputProvenance,
+      internalEvents: params.opts.internalEvents,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      provider: params.providerOverride,
+      model: params.modelOverride,
+    });
+  const trustedSubagentAnnounceHandoff =
+    exactSubagentAnnounceHandoff &&
+    hasVerifiedRequesterCompletionHandoff({
+      config: params.cfg,
+      sessionKey: params.sessionKey,
+      inputProvenance: params.opts.inputProvenance,
+      trustedInternalHandoff: params.opts.trustedInternalHandoff,
+      sessionId: params.sessionId,
+      modelProvider: params.providerOverride,
+      modelId: params.modelOverride,
+    });
   const claudeCliFallbackPrelude =
     !isRawModelRun &&
     params.isFallbackRetry &&
@@ -605,6 +630,11 @@ export function runAgentAttempt(params: {
   const isCliExecutionProvider = sessionRuntimeOverride
     ? sessionCliRuntime !== undefined
     : isCliProvider(cliExecutionProvider, params.cfg);
+  // CLI backends cannot yet project the persisted inherited deny policy onto
+  // both native and OpenClaw tools exactly, so completion wakes stay tool-free.
+  const disableTools =
+    params.opts.modelRun === true ||
+    (isSubagentAnnounceHandoff && (!trustedSubagentAnnounceHandoff || isCliExecutionProvider));
   if (params.fallbackRuntimeState && params.fallbackRuntimeState.originRuntime === undefined) {
     params.fallbackRuntimeState.originRuntime =
       !isRawModelRun && isCliExecutionProvider ? "cli" : "embedded";
@@ -1031,7 +1061,9 @@ export function runAgentAttempt(params: {
     bootstrapContextRunKind: params.opts.bootstrapContextRunKind,
     toolsAllow: params.opts.toolsAllow,
     runtimePluginToolGrant: params.opts.runtimePluginToolGrant,
-    trustedInternalHandoff: params.opts.trustedInternalHandoff,
+    trustedInternalHandoff: trustedSubagentAnnounceHandoff
+      ? params.opts.trustedInternalHandoff
+      : undefined,
     scheduledToolPolicy: params.opts.scheduledToolPolicy,
     internalEvents: params.opts.internalEvents,
     inputProvenance: params.opts.inputProvenance,

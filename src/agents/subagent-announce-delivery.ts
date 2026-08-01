@@ -19,7 +19,6 @@ import { stringifyRouteThreadId } from "../plugin-sdk/channel-route.js";
 import { defaultRuntime } from "../runtime.js";
 import {
   isAgentMediatedCompletionSourceTool,
-  normalizeInputProvenance,
   shouldPreserveUserFacingSessionStateForInputProvenance,
 } from "../sessions/input-provenance.js";
 import { deriveSessionChatTypeFromKey } from "../sessions/session-chat-type-shared.js";
@@ -46,7 +45,10 @@ import {
 import type { EmbeddedAgentQueueMessageOptions } from "./embedded-agent-runner/run-state.js";
 import type { EmbeddedAgentQueueMessageOutcome } from "./embedded-agent-runner/runs.js";
 import { mediaUrlsFromGeneratedAttachments } from "./generated-attachments.js";
-import { hasGeneratedMediaCompletionEvent } from "./internal-event-contract.js";
+import {
+  AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION,
+  hasGeneratedMediaCompletionEvent,
+} from "./internal-event-contract.js";
 import { formatAgentInternalEventsForPrompt, type AgentInternalEvent } from "./internal-events.js";
 import {
   callGateway,
@@ -68,6 +70,7 @@ import {
   runSubagentAnnounceDispatch,
   type SubagentAnnounceDeliveryResult,
 } from "./subagent-announce-dispatch.js";
+import type { SubagentCompletionToolHandoffRegistration } from "./subagent-announce-handoff.js";
 import {
   inferDeliveryTargetChatType,
   resolveCompletionDeliveryOrigins,
@@ -133,10 +136,10 @@ async function resolveQueueEmbeddedAgentMessageOutcome(
 
 async function runAnnounceAgentCall(params: {
   agentParams: Record<string, unknown>;
+  delegatedToolPolicyHandoff?: SubagentCompletionToolHandoffRegistration;
   expectFinal?: boolean;
   timeoutMs?: number;
 }): Promise<unknown> {
-  const inputProvenance = normalizeInputProvenance(params.agentParams.inputProvenance);
   return await subagentAnnounceDeliveryDeps.dispatchGatewayMethodInProcess(
     "agent",
     params.agentParams,
@@ -145,10 +148,7 @@ async function runAnnounceAgentCall(params: {
       forceSyntheticClient: shouldPreserveUserFacingSessionStateForInputProvenance(
         params.agentParams.inputProvenance,
       ),
-      delegatedToolPolicyHandoff:
-        inputProvenance?.kind === "inter_session" &&
-        inputProvenance.sourceTool === "subagent_announce" &&
-        Boolean(inputProvenance.sourceSessionKey),
+      delegatedToolPolicyHandoff: params.delegatedToolPolicyHandoff,
       timeoutMs: params.timeoutMs,
     },
   );
@@ -778,6 +778,15 @@ async function sendSubagentAnnounceDirectly(params: {
       normalizeOptionalLowercaseString(params.sourceTool) ??
       (params.expectsCompletionMessage ? "subagent_announce" : "");
     const isSubagentCompletion = sourceToolId === "subagent_announce";
+    const subagentCompletionEvents = params.internalEvents?.filter(
+      (event) =>
+        event.type === AGENT_INTERNAL_EVENT_TYPE_TASK_COMPLETION && event.source === "subagent",
+    );
+    const trustedCompletionEvent =
+      subagentCompletionEvents?.length === 1 &&
+      subagentCompletionEvents[0]?.childSessionKey === params.sourceSessionKey
+        ? subagentCompletionEvents[0]
+        : undefined;
     const agentMediatedCompletion =
       params.expectsCompletionMessage && isAgentMediatedCompletionSourceTool(sourceToolId);
     const completionRouteRequiresMessageToolDelivery =
@@ -933,6 +942,21 @@ async function sendSubagentAnnounceDirectly(params: {
         run: async () =>
           await runAnnounceAgentCall({
             agentParams: directAgentParams,
+            delegatedToolPolicyHandoff:
+              isSubagentCompletion &&
+              trustedCompletionEvent &&
+              params.sourceSessionKey &&
+              requesterActivity.sessionId
+                ? {
+                    sourceSessionKey: params.sourceSessionKey,
+                    ...(trustedCompletionEvent.childSessionId
+                      ? { sourceSessionId: trustedCompletionEvent.childSessionId }
+                      : {}),
+                    targetSessionKey: canonicalRequesterSessionKey,
+                    targetSessionId: requesterActivity.sessionId,
+                    idempotencyKey: params.directIdempotencyKey,
+                  }
+                : undefined,
             expectFinal: true,
             timeoutMs: announceTimeoutMs,
           }),

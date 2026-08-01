@@ -5,6 +5,7 @@ import { resolveRequesterToolPolicies } from "./requester-tool-policy.js";
 import type { SandboxToolPolicy } from "./sandbox.js";
 import type { ScheduledToolPolicyContext } from "./scheduled-tool-policy.js";
 import { resolveSenderToolPolicy } from "./sender-tool-policy.js";
+import type { TrustedSubagentCompletionHandoff } from "./subagent-announce-handoff.js";
 import { isToolAllowedByPolicies } from "./tool-policy-match.js";
 import { mergeAlsoAllowPolicy, resolveToolProfilePolicy } from "./tool-policy.js";
 
@@ -15,6 +16,7 @@ export type WebSearchToolPolicyParams = {
   modelId?: string;
   agentId?: string;
   sessionKey?: string;
+  sessionId?: string;
   sandboxToolPolicy?: SandboxToolPolicy;
   messageProvider?: string;
   agentAccountId?: string | null;
@@ -27,7 +29,7 @@ export type WebSearchToolPolicyParams = {
   senderUsername?: string | null;
   senderE164?: string | null;
   inputProvenance?: InputProvenance;
-  trustedInternalHandoff?: boolean;
+  trustedInternalHandoff?: TrustedSubagentCompletionHandoff;
   scheduledToolPolicy?: ScheduledToolPolicyContext;
 };
 
@@ -91,6 +93,9 @@ export function resolveWebSearchToolPolicy(
     senderE164: params.senderE164,
     inputProvenance: params.inputProvenance,
     trustedInternalHandoff: params.trustedInternalHandoff,
+    sessionId: params.sessionId,
+    modelProvider: params.modelProvider,
+    modelId: params.modelId,
     senderPolicyMode: params.scheduledToolPolicy ? "never" : "always",
     groupPolicySessionKey: params.scheduledToolPolicy?.ownerSessionKey,
     requireConfiguredGroupAccount: params.scheduledToolPolicy?.mode === "account",
