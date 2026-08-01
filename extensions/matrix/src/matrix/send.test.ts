@@ -132,13 +132,16 @@ const makeClient = () => {
         roomId: string;
         eventType: "m.room.message" | "m.room.encrypted";
         transactionId: string;
+        requestPath: string;
       }) => Promise<void>,
     ) => {
       if (beforeWireDispatch && transactionId) {
+        const eventType = await getMessageWireEventType();
         await beforeWireDispatch({
           roomId,
-          eventType: await getMessageWireEventType(),
+          eventType,
           transactionId,
+          requestPath: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${encodeURIComponent(transactionId)}`,
         });
       }
       return "evt1";
@@ -1546,6 +1549,7 @@ describe("sendMessageMatrix durable replay", () => {
           roomId,
           eventType: "m.room.message",
           transactionId: transactionId!,
+          requestPath: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId!)}`,
         });
         return "evt-media";
       })
@@ -1554,6 +1558,7 @@ describe("sendMessageMatrix durable replay", () => {
           roomId,
           eventType: "m.room.message",
           transactionId: transactionId!,
+          requestPath: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId!)}`,
         });
         throw new Error("simulated response loss");
       });
@@ -1584,6 +1589,7 @@ describe("sendMessageMatrix durable replay", () => {
           roomId,
           eventType: "m.room.message",
           transactionId: transactionId!,
+          requestPath: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId!)}`,
         });
         return "evt-media";
       })
@@ -1592,6 +1598,7 @@ describe("sendMessageMatrix durable replay", () => {
           roomId,
           eventType: "m.room.message",
           transactionId: transactionId!,
+          requestPath: `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId!)}`,
         });
         return "evt-followup";
       });

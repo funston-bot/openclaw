@@ -13,11 +13,11 @@ import {
   createMatrixPlannedEvents,
   ensureMatrixDeliveryPlanGarbageCollection,
   loadMatrixDeliveryPlan,
-  persistMatrixDeliveryPlan,
+  persistMatrixDeliveryPlan as persistMatrixDeliveryPlanImpl,
   reconcileMatrixUnknownSend,
   resolveMatrixDurableDeliveryIdentity,
 } from "./delivery-plan.js";
-import type { MatrixPlannedEvent } from "./delivery-plan.js";
+import type { MatrixPreparedEvent } from "./delivery-plan.js";
 
 const client = {
   getTransactionScopeId: vi.fn(async () => "scope-1"),
@@ -79,9 +79,30 @@ function installDeliveryPlanTestRuntime(
 
 function plannedEvents(
   planIdentity: typeof identity,
-  events: readonly Omit<MatrixPlannedEvent, "transactionId">[],
+  events: readonly Omit<MatrixPreparedEvent, "transactionId">[],
 ) {
   return createMatrixPlannedEvents({ identity: planIdentity, events });
+}
+
+async function persistMatrixDeliveryPlan(
+  params: Omit<Parameters<typeof persistMatrixDeliveryPlanImpl>[0], "dispatch"> & {
+    requestPrefix?: string;
+  },
+) {
+  const { requestPrefix = "/_matrix/client/v3", ...plan } = params;
+  const transactionId = plan.events[0]?.transactionId;
+  if (!transactionId) {
+    throw new Error("test delivery plan requires an event");
+  }
+  return await persistMatrixDeliveryPlanImpl({
+    ...plan,
+    dispatch: {
+      roomId: plan.roomId,
+      eventType: plan.wireEventType,
+      transactionId,
+      requestPath: `${requestPrefix}/rooms/${encodeURIComponent(plan.roomId)}/send/${encodeURIComponent(plan.wireEventType)}/${encodeURIComponent(transactionId)}`,
+    },
+  });
 }
 
 describe("Matrix durable delivery plans", () => {
@@ -137,6 +158,25 @@ describe("Matrix durable delivery plans", () => {
     await expect(loadMatrixDeliveryPlan(target)).resolves.toEqual(first);
     const [stored] = await createDeliveryPlanTestStore().entries();
     expect(stored?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_PLAN_TTL_MS - 5_000);
+  });
+
+  it("rejects an SDK request-path change before replay can reach the provider", async () => {
+    installDeliveryPlanTestRuntime({ getOutboundDeliveryQueueStatus: async () => "pending" });
+    const events = plannedEvents(identity, [
+      { receiptKind: "text", content: { msgtype: "m.text", body: "first" } },
+    ]);
+    const first = await persistMatrixDeliveryPlan({ ...target, events });
+
+    expect(first.events[0]?.requestPath).toBe(
+      `/_matrix/client/v3/rooms/${encodeURIComponent(target.roomId)}/send/m.room.message/${encodeURIComponent(events[0]!.transactionId)}`,
+    );
+    await expect(
+      persistMatrixDeliveryPlan({
+        ...target,
+        events,
+        requestPrefix: "/_matrix/client/v4",
+      }),
+    ).rejects.toThrow("SDK request path");
   });
 
   it("stores long exact plans without the keyed-state JSON value limit", async () => {

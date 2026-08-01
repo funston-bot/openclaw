@@ -473,6 +473,8 @@ describe("MatrixClient request hardening", () => {
             roomId: "!room:example.org",
             eventType: "m.room.encrypted",
             transactionId: "oc_transaction",
+            requestPath:
+              "/_matrix/client/v3/rooms/!room%3Aexample.org/send/m.room.encrypted/oc_transaction",
           });
         },
       ),

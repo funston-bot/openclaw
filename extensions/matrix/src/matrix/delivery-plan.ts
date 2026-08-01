@@ -8,11 +8,12 @@ import type {
 } from "openclaw/plugin-sdk/channel-outbound";
 import { getMatrixRuntime } from "../runtime.js";
 import type { MatrixClient } from "./sdk.js";
+import type { MatrixMessageWireDispatch } from "./sdk/client-base.js";
 import { withResolvedMatrixSendClient } from "./send/client.js";
 import { resolveMatrixRoomId } from "./send/targets.js";
 import type { MatrixOutboundContent } from "./send/types.js";
 
-const DELIVERY_PLAN_VERSION = 1;
+const DELIVERY_PLAN_VERSION = 2;
 const DELIVERY_PLAN_NAMESPACE = "outbound-delivery-plans";
 const DELIVERY_PLAN_MAX_ENTRIES = 10_000;
 const DELIVERY_PLAN_MAX_BYTES = 8 * 1024 * 1024;
@@ -28,10 +29,14 @@ class MatrixDeliveryPlanInvariantError extends Error {
   }
 }
 
-export type MatrixPlannedEvent = {
+export type MatrixPreparedEvent = {
   transactionId: string;
   receiptKind: MessageReceiptPartKind;
   content: MatrixOutboundContent;
+};
+
+export type MatrixPlannedEvent = MatrixPreparedEvent & {
+  requestPath: string;
 };
 
 type MatrixDeliveryPlan = {
@@ -105,6 +110,40 @@ function samePartIndexes(left: readonly number[], right: readonly number[]): boo
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function resolveMatrixRequestPathPrefix(requestPath: string, transactionId: string): string | null {
+  if (!requestPath.startsWith("/") || requestPath.includes("?") || requestPath.includes("#")) {
+    return null;
+  }
+  const encodedTransactionId = encodeURIComponent(transactionId);
+  const suffix = `/${encodedTransactionId}`;
+  if (!encodedTransactionId || !requestPath.endsWith(suffix)) {
+    return null;
+  }
+  return requestPath.slice(0, -encodedTransactionId.length);
+}
+
+function bindMatrixRequestPaths(params: {
+  events: readonly MatrixPreparedEvent[];
+  dispatch: MatrixMessageWireDispatch;
+}): MatrixPlannedEvent[] {
+  const requestPathPrefix = resolveMatrixRequestPathPrefix(
+    params.dispatch.requestPath,
+    params.dispatch.transactionId,
+  );
+  if (
+    !requestPathPrefix ||
+    !params.events.some((event) => event.transactionId === params.dispatch.transactionId)
+  ) {
+    throw new MatrixDeliveryPlanInvariantError(
+      "Matrix durable delivery observed an invalid SDK request path",
+    );
+  }
+  return params.events.map((event) => ({
+    ...structuredClone(event),
+    requestPath: `${requestPathPrefix}${encodeURIComponent(event.transactionId)}`,
+  }));
+}
+
 function resolveQueueStateDir(queueStateDir?: string): string {
   return path.resolve(queueStateDir?.trim() || getMatrixRuntime().state.resolveStateDir());
 }
@@ -171,6 +210,8 @@ function isPlan(value: unknown): value is MatrixDeliveryPlan {
         typeof event === "object" &&
         typeof event.transactionId === "string" &&
         Boolean(event.transactionId.trim()) &&
+        typeof event.requestPath === "string" &&
+        resolveMatrixRequestPathPrefix(event.requestPath, event.transactionId) !== null &&
         RECEIPT_KINDS.has(event.receiptKind) &&
         Boolean(event.content) &&
         typeof event.content === "object",
@@ -252,8 +293,8 @@ function transactionId(identity: MatrixDeliveryIdentity, eventIndex: number): st
 
 export function createMatrixPlannedEvents(params: {
   identity: MatrixDeliveryIdentity;
-  events: readonly Omit<MatrixPlannedEvent, "transactionId">[];
-}): MatrixPlannedEvent[] {
+  events: readonly Omit<MatrixPreparedEvent, "transactionId">[];
+}): MatrixPreparedEvent[] {
   return params.events.map((event, index) => ({
     ...structuredClone(event),
     transactionId: transactionId(params.identity, index),
@@ -313,7 +354,8 @@ export async function persistMatrixDeliveryPlan(params: {
   roomId: string;
   transactionScopeId: string;
   wireEventType: "m.room.message" | "m.room.encrypted";
-  events: readonly MatrixPlannedEvent[];
+  events: readonly MatrixPreparedEvent[];
+  dispatch: MatrixMessageWireDispatch;
 }): Promise<MatrixDeliveryPlan> {
   if (params.events.length === 0) {
     throw new Error("Matrix durable delivery plan must contain at least one event");
@@ -323,6 +365,24 @@ export async function persistMatrixDeliveryPlan(params: {
     ...params.identity,
     queueStateDir: resolveQueueStateDir(params.identity.queueStateDir),
   };
+  if (
+    params.dispatch.roomId !== params.roomId ||
+    params.dispatch.eventType !== params.wireEventType
+  ) {
+    throw new MatrixDeliveryPlanInvariantError(
+      "Matrix durable delivery was dispatched to an unexpected endpoint",
+    );
+  }
+  const preparedEvents = params.events.map((event, index) => {
+    const expectedTransactionId = transactionId(identity, index);
+    if (event.transactionId !== expectedTransactionId) {
+      throw new MatrixDeliveryPlanInvariantError(
+        "Matrix durable delivery plan has an invalid transaction identifier",
+      );
+    }
+    return structuredClone(event);
+  });
+  const events = bindMatrixRequestPaths({ events: preparedEvents, dispatch: params.dispatch });
   const plan: MatrixDeliveryPlan = {
     version: DELIVERY_PLAN_VERSION,
     queueId: identity.queueId,
@@ -336,15 +396,7 @@ export async function persistMatrixDeliveryPlan(params: {
     partIndex: requireIndex(identity.partIndex, "part index"),
     partIndexes: requirePartIndexes(identity.partIndexes),
     createdAt: Date.now(),
-    events: params.events.map((event, index) => {
-      const expectedTransactionId = transactionId(identity, index);
-      if (event.transactionId !== expectedTransactionId) {
-        throw new MatrixDeliveryPlanInvariantError(
-          "Matrix durable delivery plan has an invalid transaction identifier",
-        );
-      }
-      return structuredClone(event);
-    }),
+    events,
   };
   const store = createDeliveryPlanStore();
   const bytes = new TextEncoder().encode(JSON.stringify(plan));
@@ -357,9 +409,23 @@ export async function persistMatrixDeliveryPlan(params: {
       "Matrix durable delivery plan disappeared after registration",
     );
   }
-  if (JSON.stringify(existing.events) !== JSON.stringify(plan.events)) {
+  const withoutRequestPaths = (planned: readonly MatrixPlannedEvent[]) =>
+    planned.map(({ requestPath: _requestPath, ...event }) => event);
+  if (
+    JSON.stringify(withoutRequestPaths(existing.events)) !==
+    JSON.stringify(withoutRequestPaths(plan.events))
+  ) {
     throw new MatrixDeliveryPlanInvariantError(
       "Matrix durable delivery plan no longer matches the prepared event batch",
+    );
+  }
+  if (
+    existing.events.some((event, index) => event.requestPath !== plan.events[index]?.requestPath)
+  ) {
+    // Matrix idempotency is scoped to the transaction ID plus full HTTP path.
+    // Route drift must fail before fetch or the same ID can create a duplicate.
+    throw new MatrixDeliveryPlanInvariantError(
+      "Matrix durable delivery SDK request path no longer matches the persisted plan",
     );
   }
   return existing;

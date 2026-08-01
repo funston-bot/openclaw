@@ -11,7 +11,7 @@ import {
   loadMatrixDeliveryPlan,
   persistMatrixDeliveryPlan,
   resolveMatrixDurableDeliveryIdentity,
-  type MatrixPlannedEvent,
+  type MatrixPreparedEvent,
 } from "./delivery-plan.js";
 import { loadOutboundMediaFromUrl } from "./outbound-media-runtime.js";
 import { buildPollStartContent, M_POLL_START } from "./poll-types.js";
@@ -213,7 +213,7 @@ export async function sendMessageMatrix(
             wireEventType: wireEventType!,
           })
         : null;
-      let plannedEvents: MatrixPlannedEvent[] | undefined = storedPlan?.events;
+      let plannedEvents: MatrixPreparedEvent[] | undefined = storedPlan?.events;
       if (!plannedEvents) {
         const { chunks, tableMode } = chunkMatrixText(trimmedMessage, {
           cfg,
@@ -223,7 +223,7 @@ export async function sendMessageMatrix(
           ? buildThreadRelation(threadId, opts.replyToId)
           : buildReplyRelation(opts.replyToId);
         let pendingExtraContent = opts.extraContent;
-        const events: Omit<MatrixPlannedEvent, "transactionId">[] = [];
+        const events: Omit<MatrixPreparedEvent, "transactionId">[] = [];
         const prepareContent = (
           content: MatrixOutboundContent,
           receiptKind: MessageReceiptPartKind,
@@ -360,6 +360,7 @@ export async function sendMessageMatrix(
                   transactionScopeId: transactionScopeId!,
                   wireEventType: dispatch.eventType,
                   events: plannedEvents,
+                  dispatch,
                 });
                 if (!platformDispatchStarted) {
                   await opts.onPlatformSendDispatch?.();

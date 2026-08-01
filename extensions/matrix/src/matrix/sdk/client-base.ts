@@ -43,6 +43,7 @@ export type MatrixMessageWireDispatch = {
   roomId: string;
   eventType: "m.room.message" | "m.room.encrypted";
   transactionId: string;
+  requestPath: string;
 };
 
 type MatrixMessageWireDispatchGuard = (dispatch: MatrixMessageWireDispatch) => Promise<void>;
@@ -63,7 +64,8 @@ function resolveMessageWireDispatch(
       : resource instanceof URL
         ? resource.href
         : resource.url;
-  const segments = new URL(rawUrl).pathname.split("/").filter(Boolean);
+  const requestPath = new URL(rawUrl).pathname;
+  const segments = requestPath.split("/").filter(Boolean);
   const roomsIndex = segments.lastIndexOf("rooms");
   if (roomsIndex < 0 || segments[roomsIndex + 2] !== "send" || segments.length !== roomsIndex + 5) {
     return null;
@@ -76,6 +78,7 @@ function resolveMessageWireDispatch(
     roomId: decodeURIComponent(segments[roomsIndex + 1] ?? ""),
     eventType,
     transactionId: decodeURIComponent(segments[roomsIndex + 4] ?? ""),
+    requestPath,
   };
 }
 
