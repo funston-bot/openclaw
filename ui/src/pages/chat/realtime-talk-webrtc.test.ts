@@ -558,6 +558,19 @@ describe("WebRtcSdpRealtimeTalkTransport", () => {
     transport.stop();
   });
 
+  it("stops processing the current provider event when a transcript callback closes it", async () => {
+    stubAnswerSdpFetch();
+    const onTalkEvent = vi.fn();
+    const onTranscript = vi.fn(() => transport.stop());
+    const transport = createOpenAiTransport({}, { onTranscript, onTalkEvent });
+
+    await transport.start();
+    dispatchTranscription(FakePeerConnection.instances[0], "overflow");
+
+    expect(onTranscript).toHaveBeenCalledOnce();
+    expect(onTalkEvent.mock.calls.map(([event]) => event.type)).toEqual(["session.closed"]);
+  });
+
   it("maps frameless Codex transcript events by role and finality", async () => {
     vi.stubGlobal(
       "fetch",

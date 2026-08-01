@@ -303,6 +303,9 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
         text: content.inputTranscription.text,
         final: content.inputTranscription.finished ?? false,
       });
+      if (this.closed) {
+        return;
+      }
       this.emitTalkEvent({
         type: content.inputTranscription.finished ? "transcript.done" : "transcript.delta",
         final: content.inputTranscription.finished ?? false,
@@ -329,6 +332,9 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
         text: content.outputTranscription.text,
         final: content.outputTranscription.finished ?? false,
       });
+      if (this.closed) {
+        return;
+      }
       this.emitTalkEvent({
         type: content.outputTranscription.finished ? "output.text.done" : "output.text.delta",
         final: content.outputTranscription.finished ?? false,
@@ -354,6 +360,9 @@ export class GoogleLiveRealtimeTalkTransport implements RealtimeTalkTransport {
           text: part.text,
           final: content?.turnComplete ?? false,
         });
+        if (this.closed) {
+          return;
+        }
         this.emitTalkEvent({
           type: content?.turnComplete ? "output.text.done" : "output.text.delta",
           final: content?.turnComplete ?? false,

@@ -292,6 +292,9 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
       case "conversation.item.input_audio_transcription.completed":
         if (event.transcript) {
           this.ctx.callbacks.onTranscript?.({ role: "user", text: event.transcript, final: true });
+          if (this.closed) {
+            return;
+          }
           this.emitTalkEvent({
             type: "transcript.done",
             final: true,
@@ -389,6 +392,9 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
       text,
       final,
     });
+    if (this.closed) {
+      return;
+    }
     this.emitTalkEvent({
       type: final ? "output.text.done" : "output.text.delta",
       final,
@@ -407,6 +413,9 @@ export class WebRtcSdpRealtimeTalkTransport implements RealtimeTalkTransport {
       return;
     }
     this.ctx.callbacks.onTranscript?.({ role, text, final });
+    if (this.closed) {
+      return;
+    }
     const type =
       role === "user"
         ? final

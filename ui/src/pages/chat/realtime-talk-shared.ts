@@ -579,6 +579,10 @@ export async function submitRealtimeTalkConsult(params: {
     const args =
       typeof params.args === "string" ? JSON.parse(params.args || "{}") : (params.args ?? {});
     await ctx.flushTranscriptWrites?.();
+    if (params.signal?.aborted) {
+      await submitAbortResult();
+      return;
+    }
     const response = await ctx.client.request<{ runId?: string; idempotencyKey?: string }>(
       "talk.client.toolCall",
       {

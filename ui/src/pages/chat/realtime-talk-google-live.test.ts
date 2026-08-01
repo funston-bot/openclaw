@@ -534,6 +534,27 @@ describe("GoogleLiveRealtimeTalkTransport", () => {
     expect(audioEvent?.transport).toBe("provider-websocket");
   });
 
+  it("stops processing the current provider message when a transcript callback closes it", async () => {
+    const onTalkEvent = vi.fn();
+    const onTranscript = vi.fn(() => transport.stop());
+    const transport = createTransport({ onTalkEvent, onTranscript });
+
+    await transport.start();
+    latestWebSocket().emitMessage(
+      encodeJsonFrame({
+        serverContent: {
+          inputTranscription: { text: "overflow", finished: true },
+          outputTranscription: { text: "too late", finished: true },
+          turnComplete: true,
+        },
+      }),
+    );
+    await flushMicrotasks();
+
+    expect(onTranscript).toHaveBeenCalledOnce();
+    expect(onTalkEvent.mock.calls.map(([event]) => event.type)).toEqual(["session.closed"]);
+  });
+
   it("ignores late WebSocket events after stop", async () => {
     const onStatus = vi.fn();
     const transport = createTransport({ onStatus });

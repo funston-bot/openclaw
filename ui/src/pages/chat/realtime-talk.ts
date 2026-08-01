@@ -1,6 +1,12 @@
 // Control UI chat module implements realtime talk behavior.
 import type { TalkCatalogResult } from "@openclaw/gateway-protocol";
+import type { BoundedSerialQueue } from "../../../../src/shared/bounded-serial-queue.js";
 import { normalizeTalkTransport } from "../../../../src/talk/talk-session-controller.js";
+import {
+  createVoiceTranscriptQueue,
+  normalizeVoiceTranscriptText,
+  VOICE_TRANSCRIPT_QUEUE_OVERFLOW_MESSAGE,
+} from "../../../../src/talk/voice-transcript.js";
 import type { GatewayBrowserClient } from "../../api/gateway.ts";
 import { GatewayRelayRealtimeTalkTransport } from "./realtime-talk-gateway-relay.ts";
 import { GoogleLiveRealtimeTalkTransport } from "./realtime-talk-google-live.ts";
@@ -62,7 +68,7 @@ type DetachedVoiceSession = {
   voiceSessionId: string;
   serverOwned: boolean;
   generation?: number;
-  transcriptWrites: Promise<void>;
+  transcriptQueue: BoundedSerialQueue;
 };
 
 type RealtimeTalkConfigResult = {
@@ -145,7 +151,7 @@ export class RealtimeTalkSession {
   private readonly transcriptSeqByVoiceSessionId = new Map<string, number>();
   private acceptingTranscripts = false;
   private serverOwnedVoiceSession = false;
-  private transcriptWrites: Promise<void> = Promise.resolve();
+  private transcriptQueue = createVoiceTranscriptQueue();
 
   constructor(
     private readonly client: GatewayBrowserClient,
@@ -196,11 +202,12 @@ export class RealtimeTalkSession {
       transport === "gateway-relay"
         ? this.callbacks
         : this.clientOwnedTranscriptCallbacks(voiceSessionId, this.transportGeneration);
+    const transcriptQueue = this.transcriptQueue;
     this.transport = createTransport(session, {
       client: this.client,
       sessionKey: this.sessionKey,
       voiceSessionId,
-      flushTranscriptWrites: async () => await this.transcriptWrites,
+      flushTranscriptWrites: async () => await transcriptQueue.flush(),
       callbacks,
       inputDeviceId: this.localOptions.inputDeviceId,
       videoDeviceId: this.localOptions.videoDeviceId,
@@ -322,10 +329,12 @@ export class RealtimeTalkSession {
         .catch(() => undefined);
       return;
     }
+    const transcriptQueue = createVoiceTranscriptQueue();
+    transcriptQueue.seal();
     this.closeLogicalVoiceSession({
       voiceSessionId,
       serverOwned: false,
-      transcriptWrites: Promise.resolve(),
+      transcriptQueue,
     });
   }
 
@@ -350,19 +359,27 @@ export class RealtimeTalkSession {
         if (entry.final) {
           const transcriptSeq =
             (this.transcriptSeqByVoiceSessionId.get(owningVoiceSessionId) ?? 0) + 1;
-          this.transcriptSeqByVoiceSessionId.set(owningVoiceSessionId, transcriptSeq);
           const entryId = String(transcriptSeq);
-          // One promise tail preserves transcript order and makes consult flushes
-          // observe the same dedupe sequence used by close.
-          const write = this.transcriptWrites.then(async () => {
-            await this.writeTranscriptWithRetry({
-              voiceSessionId: owningVoiceSessionId,
-              entryId,
-              role: entry.role,
-              text: entry.text,
-            });
-          });
-          this.transcriptWrites = write.catch((error: unknown) => {
+          const role = entry.role;
+          const text = normalizeVoiceTranscriptText(entry.text);
+          const admission = this.transcriptQueue.enqueue(
+            async () =>
+              await this.writeTranscriptWithRetry({
+                voiceSessionId: owningVoiceSessionId,
+                entryId,
+                role,
+                text,
+              }),
+            { weight: text.length },
+          );
+          if (!admission.accepted) {
+            if (admission.reason === "overflow") {
+              this.failTranscriptPersistence(owningGeneration);
+            }
+            return;
+          }
+          this.transcriptSeqByVoiceSessionId.set(owningVoiceSessionId, transcriptSeq);
+          void admission.completion.catch((error: unknown) => {
             // The utterance exists only in client memory; after retries and surfacing the error,
             // keeping the record open cannot recover it, while server entryId dedupe preserves order.
             // Deferring close would only shift the identical loss to the 6h stale sweep.
@@ -378,6 +395,32 @@ export class RealtimeTalkSession {
         this.callbacks.onTranscript?.(entry);
       },
     };
+  }
+
+  private failTranscriptPersistence(owningGeneration: number): void {
+    if (
+      this.transportGeneration !== owningGeneration ||
+      !this.acceptingTranscripts ||
+      !this.voiceSessionId
+    ) {
+      return;
+    }
+    this.lifecycleGeneration += 1;
+    this.closed = true;
+    this.videoOperation += 1;
+    this.videoEnabled = false;
+    activeRealtimeTalkSessions.delete(this);
+    const detached = this.detachVoiceSession();
+    // Retire the overflowing transport before accepted-write and close failures
+    // settle so the first terminal persistence error keeps precedence.
+    this.transportGeneration += 1;
+    this.transport?.stop();
+    this.transport = null;
+    console.warn(VOICE_TRANSCRIPT_QUEUE_OVERFLOW_MESSAGE);
+    this.callbacks.onStatus?.("error", VOICE_TRANSCRIPT_QUEUE_OVERFLOW_MESSAGE);
+    if (detached) {
+      this.closeLogicalVoiceSession(detached);
+    }
   }
 
   private async writeTranscriptWithRetry(params: {
@@ -420,12 +463,13 @@ export class RealtimeTalkSession {
       voiceSessionId,
       serverOwned: this.serverOwnedVoiceSession,
       generation: this.transportGeneration,
-      transcriptWrites: this.transcriptWrites,
+      transcriptQueue: this.transcriptQueue,
     } satisfies DetachedVoiceSession;
+    detached.transcriptQueue.seal();
     this.voiceSessionId = undefined;
     this.acceptingTranscripts = false;
     this.serverOwnedVoiceSession = false;
-    this.transcriptWrites = Promise.resolve();
+    this.transcriptQueue = createVoiceTranscriptQueue();
     return detached;
   }
 
@@ -433,7 +477,8 @@ export class RealtimeTalkSession {
     if (detached.serverOwned) {
       return;
     }
-    void detached.transcriptWrites
+    void detached.transcriptQueue
+      .flush()
       .then(async () => {
         let lastError: unknown;
         for (const delayMs of [0, 500, 2_000]) {
