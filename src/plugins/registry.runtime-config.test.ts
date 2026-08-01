@@ -26,6 +26,55 @@ function createTestRegistry(runtime: PluginRuntime) {
 }
 
 describe("plugin registry runtime config scope", () => {
+  it("denies outbound queue status lookup to untrusted plugins before reading queue state", async () => {
+    const runtime = createPluginRuntime();
+    const getOutboundDeliveryQueueStatus = vi.fn(async () => "pending" as const);
+    runtime.state.getOutboundDeliveryQueueStatus = getOutboundDeliveryQueueStatus;
+    const pluginRegistry = createTestRegistry(runtime);
+    const record = createPluginRecord({
+      id: "untrusted-channel",
+      source: "/plugins/untrusted-channel/index.js",
+      origin: "global",
+      enabled: true,
+      configSchema: false,
+    });
+    const api = pluginRegistry.createApi(record, { config: {} as OpenClawConfig });
+
+    await expect(
+      api.runtime.state.getOutboundDeliveryQueueStatus?.("queue-1", "/state/other"),
+    ).rejects.toThrow(
+      "getOutboundDeliveryQueueStatus is only available for trusted plugins in this release",
+    );
+    expect(getOutboundDeliveryQueueStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { origin: "bundled", trustedOfficialInstall: undefined },
+    { origin: "global", trustedOfficialInstall: true },
+  ] as const)(
+    "allows outbound queue status lookup for $origin trusted plugins",
+    async ({ origin, trustedOfficialInstall }) => {
+      const runtime = createPluginRuntime();
+      const getOutboundDeliveryQueueStatus = vi.fn(async () => "terminal" as const);
+      runtime.state.getOutboundDeliveryQueueStatus = getOutboundDeliveryQueueStatus;
+      const pluginRegistry = createTestRegistry(runtime);
+      const record = createPluginRecord({
+        id: `trusted-${origin}-channel`,
+        source: `/plugins/trusted-${origin}-channel/index.js`,
+        origin,
+        trustedOfficialInstall,
+        enabled: true,
+        configSchema: false,
+      });
+      const api = pluginRegistry.createApi(record, { config: {} as OpenClawConfig });
+
+      await expect(
+        api.runtime.state.getOutboundDeliveryQueueStatus?.("queue-1", "/state/current"),
+      ).resolves.toBe("terminal");
+      expect(getOutboundDeliveryQueueStatus).toHaveBeenCalledWith("queue-1", "/state/current");
+    },
+  );
+
   it("resolves plugin API paths against the plugin root", () => {
     const pluginRoot = path.join(os.tmpdir(), "openclaw-plugins", "demo");
     const pluginRegistry = createTestRegistry(createPluginRuntime());

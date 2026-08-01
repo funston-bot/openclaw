@@ -538,6 +538,7 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
           const baseState = getRuntimeProperty();
           const assertPluginStateAllowed = (
             methodName:
+              | "getOutboundDeliveryQueueStatus"
               | "openBlobStore"
               | "openKeyedStore"
               | "openSyncKeyedStore"
@@ -556,8 +557,15 @@ export function createPluginRuntimeResolver(state: PluginRegistryState) {
               );
             }
           };
+          const getOutboundDeliveryQueueStatus = baseState.getOutboundDeliveryQueueStatus;
           return {
             ...baseState,
+            getOutboundDeliveryQueueStatus: getOutboundDeliveryQueueStatus
+              ? async (queueId: string, stateDir?: string) => {
+                  assertPluginStateAllowed("getOutboundDeliveryQueueStatus");
+                  return await getOutboundDeliveryQueueStatus(queueId, stateDir);
+                }
+              : undefined,
             openBlobStore: <TMetadata>(
               options: OpenBlobStoreOptions,
             ): PluginBlobStore<TMetadata> => {
