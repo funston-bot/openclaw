@@ -1019,6 +1019,59 @@ describe("delivery-queue recovery", () => {
     expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
   });
 
+  it("atomically reclaims an exact replay-safe stable unknown attempt", async () => {
+    const id = "cron-direct-delivery:v1:replay-safe-unknown";
+    await enqueueDeliveryOnce(
+      {
+        channel: "demo-channel-a",
+        to: "+1",
+        payloads: [{ text: "first part" }, { text: "second part" }],
+        queuePolicy: "required",
+        completionRetention: {
+          idPrefix: "cron-direct-delivery:v1:",
+          maxAgeMs: 24 * 60 * 60_000,
+          maxEntries: 2_000,
+        },
+        requiresProducerClaim: true,
+      },
+      id,
+      tmpDir(),
+    );
+    const originalAttemptId = await claimDeliveryPlatformSendAttempt(id, tmpDir());
+    if (!originalAttemptId) {
+      throw new Error("test invariant: original stable send must own its attempt");
+    }
+    await markDeliveryPlatformSendAttemptStarted(id, tmpDir(), undefined, originalAttemptId);
+    await markDeliveryPlatformOutcomeUnknown(id, tmpDir(), originalAttemptId);
+    resolveOutboundChannelMessageAdapterMock.mockReturnValue({
+      durableFinal: {
+        capabilities: { reconcileUnknownSend: true },
+        reconcileUnknownSend: vi.fn().mockResolvedValue({ status: "replay_safe" }),
+      },
+    });
+    let recoveredAttemptId: string | undefined;
+    const deliver = vi.fn(async (params: Parameters<DeliverFn>[0]) => {
+      recoveredAttemptId = params.deliveryProducerClaimId;
+      if (!recoveredAttemptId) {
+        throw new Error("replay-safe recovery must own a fenced producer claim");
+      }
+      await markDeliveryPlatformSendAttemptStarted(id, tmpDir(), undefined, recoveredAttemptId);
+      return [
+        { channel: "demo-channel-a", messageId: "first-provider-id" },
+        { channel: "demo-channel-a", messageId: "second-provider-id" },
+      ];
+    });
+
+    const { result } = await runRecovery({ deliver });
+
+    expect(result).toMatchObject({ recovered: 1, failed: 0 });
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(recoveredAttemptId).toEqual(expect.any(String));
+    expect(recoveredAttemptId).not.toBe(originalAttemptId);
+    expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
+    expect(readOutboundQueueStatus(tmpDir(), id)).toBe("completed");
+  });
+
   it("cleans provider plans when a replay-safe entry exhausts its attempt budget", async () => {
     const id = await enqueueRecoveryDelivery({ maxRetries: 1 });
     await reserveDeliveryAttempt(id, 1, tmpDir());

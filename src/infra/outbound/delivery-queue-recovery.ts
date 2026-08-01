@@ -733,6 +733,7 @@ async function drainQueuedEntry(opts: {
   const attemptBudgetExhausted = resolveAttemptCount(entry) >= maxRetries;
   let reconciledPlatformSendAttemptId: string | undefined;
   let reconciledPlatformSendStartedAt: number | undefined;
+  let reconciledPlatformSendMode: "not_sent" | "replay_safe" | undefined;
   const ownerState = await resolveCompletedOwnerBeforeRecovery(opts);
   if (ownerState !== "continue") {
     return ownerState;
@@ -809,6 +810,7 @@ async function drainQueuedEntry(opts: {
     if (reconciliationMakesReplaySafe || reconciliationProvedPreSendFailure) {
       reconciledPlatformSendAttemptId = entry.platformSendAttemptId;
       reconciledPlatformSendStartedAt = entry.platformSendStartedAt;
+      reconciledPlatformSendMode = reconciliationMakesReplaySafe ? "replay_safe" : "not_sent";
       opts.log.info(
         reconciliationMakesReplaySafe
           ? `Delivery entry ${entry.id} has a provider-idempotent replay plan; replaying`
@@ -920,6 +922,7 @@ async function drainQueuedEntry(opts: {
         opts.stateDir,
         reconciledPlatformSendStartedAt,
         reconciledPlatformSendAttemptId,
+        reconciledPlatformSendMode,
       )
     : undefined;
   if (requiresProducerClaim && !producerClaimId) {

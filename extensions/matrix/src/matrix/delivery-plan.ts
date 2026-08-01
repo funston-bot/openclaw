@@ -522,7 +522,7 @@ export async function cleanupMatrixDeliveryPlans(ctx: {
   queueId: string;
   deliveryQueueStateDir?: string;
 }): Promise<void> {
-  const runtimeState = getMatrixRuntime().state;
+  const runtime = getMatrixRuntime();
   const store = createDeliveryPlanStore();
   try {
     await store.deleteExpired();
@@ -539,7 +539,7 @@ export async function cleanupMatrixDeliveryPlans(ctx: {
     await Promise.all(keys.map(async (key) => await store.delete(key)));
   } catch (error) {
     // A failed terminal cleanup must re-arm GC for the next send in this process.
-    initialPlanPrunes.delete(runtimeState);
+    initialPlanPrunes.delete(runtime);
     throw error;
   }
 }
@@ -591,17 +591,19 @@ const initialPlanPrunes = new WeakMap<object, Promise<MatrixDeliveryPlanPruneRes
 export async function ensureMatrixDeliveryPlanGarbageCollection(options?: {
   force?: boolean;
 }): Promise<MatrixDeliveryPlanPruneResult> {
-  const runtimeState = getMatrixRuntime().state;
+  // The plugin runtime proxy is stable, while its state facade is recreated
+  // on access. Cache on the proxy so every durable part does not rescan plans.
+  const runtime = getMatrixRuntime();
   const current =
     options?.force === true
       ? pruneMatrixTerminalDeliveryPlans()
-      : (initialPlanPrunes.get(runtimeState) ?? pruneMatrixTerminalDeliveryPlans());
-  initialPlanPrunes.set(runtimeState, current);
+      : (initialPlanPrunes.get(runtime) ?? pruneMatrixTerminalDeliveryPlans());
+  initialPlanPrunes.set(runtime, current);
   try {
     return await current;
   } catch (error) {
-    if (initialPlanPrunes.get(runtimeState) === current) {
-      initialPlanPrunes.delete(runtimeState);
+    if (initialPlanPrunes.get(runtime) === current) {
+      initialPlanPrunes.delete(runtime);
     }
     throw error;
   }

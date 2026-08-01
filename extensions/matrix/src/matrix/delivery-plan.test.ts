@@ -459,12 +459,13 @@ describe("Matrix durable delivery plans", () => {
     }
   });
 
-  it("keeps a successful initial prune latched after terminal cleanup", async () => {
+  it("keeps a successful initial prune latched with fresh runtime state facades", async () => {
     const baseStore = createDeliveryPlanTestStore();
     const deleteExpired = vi.fn(async () => await baseStore.deleteExpired());
     const entries = vi.fn(async () => await baseStore.entries());
     installDeliveryPlanTestRuntime({
       openBlobStore: () => ({ ...baseStore, deleteExpired, entries }) as never,
+      freshStateFacade: true,
     });
 
     await ensureMatrixDeliveryPlanGarbageCollection();

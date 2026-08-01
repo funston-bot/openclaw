@@ -25,6 +25,7 @@ type MatrixTestRuntimeOptions = {
     PluginRuntime["state"]
   >["getOutboundDeliveryQueueStatus"];
   openBlobStore?: PluginRuntime["state"]["openBlobStore"];
+  freshStateFacade?: boolean;
 };
 
 type MatrixRuntimeStub = {
@@ -122,6 +123,10 @@ export function installMatrixTestRuntime(options: MatrixTestRuntimeOptions = {})
         })) as PluginRuntime["state"]["openSyncKeyedStore"],
     },
   };
+  if (options.freshStateFacade) {
+    const state = runtime.state;
+    Object.defineProperty(runtime, "state", { get: () => ({ ...state }) });
+  }
 
   setMatrixRuntime(runtime as unknown as PluginRuntime);
 }

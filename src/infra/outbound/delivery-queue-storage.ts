@@ -480,6 +480,7 @@ export async function claimDeliveryPlatformSendAttempt(
   stateDir?: string,
   reconciledPlatformSendStartedAt?: number,
   reconciledPlatformSendAttemptId?: string,
+  reconciledPlatformSendMode?: "not_sent" | "replay_safe",
 ): Promise<string | undefined> {
   return claimDeliveryQueueEntryPlatformSend({
     queueName: OUTBOUND_DELIVERY_QUEUE_NAME,
@@ -487,6 +488,7 @@ export async function claimDeliveryPlatformSendAttempt(
     stateDir,
     ...(reconciledPlatformSendStartedAt !== undefined ? { reconciledPlatformSendStartedAt } : {}),
     ...(reconciledPlatformSendAttemptId !== undefined ? { reconciledPlatformSendAttemptId } : {}),
+    ...(reconciledPlatformSendMode !== undefined ? { reconciledPlatformSendMode } : {}),
   });
 }
 

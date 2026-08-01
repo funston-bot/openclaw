@@ -13,6 +13,7 @@ type PlatformClaimParams = {
   stateDir?: string;
   reconciledPlatformSendAttemptId?: string;
   reconciledPlatformSendStartedAt?: number;
+  reconciledPlatformSendMode?: "not_sent" | "replay_safe";
 };
 
 const PLATFORM_SEND_OWNER_LEASE_MS = 30_000;
@@ -102,15 +103,26 @@ export function claimDeliveryQueueEntryPlatformSend(
 ): string | undefined {
   const claimId = generateSecureUuid();
   return transitionUnsentDeliveryQueueEntry(params, "claim", (entry, now) => {
-    const reconciledNotSent =
-      entry.recoveryState === "send_attempt_started" &&
+    const exactReconciledAttempt =
       typeof params.reconciledPlatformSendStartedAt === "number" &&
       entry.platformSendStartedAt === params.reconciledPlatformSendStartedAt &&
       typeof params.reconciledPlatformSendAttemptId === "string" &&
       entry.platformSendAttemptId === params.reconciledPlatformSendAttemptId;
+    const reconciledNotSent =
+      exactReconciledAttempt &&
+      params.reconciledPlatformSendMode !== "replay_safe" &&
+      entry.recoveryState === "send_attempt_started";
+    // Only an exact provider-idempotent plan may replace post-send evidence;
+    // a generic not-sent verdict must never erase an unknown platform outcome.
+    const reconciledReplaySafe =
+      exactReconciledAttempt &&
+      params.reconciledPlatformSendMode === "replay_safe" &&
+      (entry.recoveryState === "send_attempt_started" ||
+        entry.recoveryState === "unknown_after_send");
     if (
       entry.recoveryState &&
       !reconciledNotSent &&
+      !reconciledReplaySafe &&
       (entry.recoveryState !== "producer_claimed" ||
         typeof entry.availableAt !== "number" ||
         entry.availableAt > now)
