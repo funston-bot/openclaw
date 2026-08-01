@@ -110,11 +110,14 @@ function samePartIndexes(left: readonly number[], right: readonly number[]): boo
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function resolveMatrixRequestPathPrefix(requestPath: string, transactionId: string): string | null {
+function resolveMatrixRequestPathPrefix(
+  requestPath: string,
+  eventTransactionId: string,
+): string | null {
   if (!requestPath.startsWith("/") || requestPath.includes("?") || requestPath.includes("#")) {
     return null;
   }
-  const encodedTransactionId = encodeURIComponent(transactionId);
+  const encodedTransactionId = encodeURIComponent(eventTransactionId);
   const suffix = `/${encodedTransactionId}`;
   if (!encodedTransactionId || !requestPath.endsWith(suffix)) {
     return null;
