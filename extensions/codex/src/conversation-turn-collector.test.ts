@@ -131,6 +131,31 @@ describe("codex conversation turn collector", () => {
     await expect(collector.wait({ timeoutMs: 100 })).resolves.toEqual({ replyText: "real answer" });
   });
 
+  it("retains commentary completion after the pre-start notification buffer fills", async () => {
+    const collector = createCodexConversationTurnCollector("thread-1");
+    for (let index = 0; index < 100; index += 1) {
+      collector.handleNotification({
+        method: "item/agentMessage/delta",
+        params: { threadId: "thread-1", turnId: "turn-1", itemId: "progress", delta: "." },
+      });
+    }
+    collector.handleNotification({
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { type: "agentMessage", id: "progress", text: "progress", phase: "commentary" },
+      },
+    });
+    collector.handleNotification({
+      method: "turn/completed",
+      params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", items: [] } },
+    });
+    collector.setTurnId("turn-1");
+
+    await expect(collector.wait({ timeoutMs: 100 })).resolves.toEqual({ replyText: "" });
+  });
+
   it.each([
     { status: "interrupted", expected: "codex app-server bound turn was interrupted" },
     {

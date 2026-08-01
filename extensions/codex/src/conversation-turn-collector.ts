@@ -60,10 +60,20 @@ export function createCodexConversationTurnCollector(threadId: string) {
       if (pendingTurnId) {
         const pending = pendingNotificationsByTurnId.get(pendingTurnId) ?? [];
         if (pending.length === MAX_PENDING_NOTIFICATIONS_PER_TURN) {
-          if (notification.method !== "turn/completed") {
+          if (
+            notification.method !== "turn/completed" &&
+            notification.method !== "item/completed"
+          ) {
             return;
           }
-          const expiredNotification = pending.findIndex((item) => item.method !== "turn/completed");
+          // Preserve item phase as well as turn status: losing commentary completion
+          // would make its retained progress deltas impersonate a final answer.
+          let expiredNotification = pending.findIndex(
+            (item) => item.method !== "turn/completed" && item.method !== "item/completed",
+          );
+          if (expiredNotification < 0 && notification.method === "turn/completed") {
+            expiredNotification = pending.findIndex((item) => item.method === "item/completed");
+          }
           if (expiredNotification < 0) {
             return;
           }
