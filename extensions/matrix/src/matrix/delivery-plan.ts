@@ -35,7 +35,7 @@ export type MatrixPreparedEvent = {
   content: MatrixOutboundContent;
 };
 
-export type MatrixPlannedEvent = MatrixPreparedEvent & {
+type MatrixPlannedEvent = MatrixPreparedEvent & {
   requestPath: string;
 };
 
