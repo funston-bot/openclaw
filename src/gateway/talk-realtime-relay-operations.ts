@@ -100,7 +100,7 @@ export function closeRelaySession(session: RelaySession, reason: "completed" | "
   } finally {
     // Provider teardown may throw, but the relay must still reach its durable
     // voice and owner-visible terminal state before that error is surfaced.
-    closeRelayVoiceSession(session);
+    void closeRelayVoiceSession(session);
     broadcastToOwner(session.context, session.connId, {
       relaySessionId: session.id,
       type: "close",
@@ -351,7 +351,7 @@ export async function flushTalkRealtimeRelayVoiceWrites(params: {
   connId: string;
 }): Promise<void> {
   const session = getRelaySession(params.relaySessionId, params.connId);
-  await session.voiceTranscriptWrites;
+  await session.voiceTranscriptQueue.flush();
 }
 
 /** Applies realtime voice-control text to the active agent-consult chat run. */

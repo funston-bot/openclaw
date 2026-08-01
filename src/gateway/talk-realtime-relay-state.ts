@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/types.js";
 import type { RealtimeVoiceProviderPlugin } from "../plugins/types.js";
+import type { BoundedSerialQueue } from "../shared/bounded-serial-queue.js";
 import type { RealtimeVoiceAgentControlResult } from "../talk/agent-run-control.js";
 import type {
   RealtimeVoiceBrowserAudioContract,
@@ -112,7 +113,9 @@ export type RelaySession = {
   voiceConfig?: OpenClawConfig;
   voiceSessionCreated: boolean;
   voiceTranscriptSeq: number;
-  voiceTranscriptWrites: Promise<void>;
+  voiceTranscriptQueue: BoundedSerialQueue;
+  voiceSessionClose?: Promise<void>;
+  failVoiceTranscriptPersistence: (message: string) => void;
   pendingVoiceTranscripts: Array<{ role: "user" | "assistant"; text: string }>;
 };
 
